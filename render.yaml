@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: farmconnect-backend
+    env: node
+    plan: starter
+    buildCommand: npm ci --omit=dev && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        value: '--max-old-space-size=512'
+    scaling:
+      minInstances: 1
+      maxInstances: 1

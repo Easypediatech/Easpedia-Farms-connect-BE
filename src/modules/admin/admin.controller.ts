@@ -22,6 +22,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiQuery,
   ApiBody,
   ApiBearerAuth,
 } from '@nestjs/swagger';
@@ -59,11 +60,14 @@ import {
 import { CreateLoanDto } from '../loan/dto/create-loan.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { AdminGuard } from '../../common/guards/admin.guard';
+import { SuperAdminGuard } from '../../common/guards/super-admin.guard';
 import { Types } from 'mongoose';
 import { PayoutMonitoringService } from '../wallet/payout-monitoring.service';
 import { WithdrawerKpiFilterDto } from '../wallet/dto/withdrawer-kpi-query.dto';
 import { WithdrawerPayoutFilterDto } from '../wallet/dto/withdrawer-payout-query.dto';
 import { FinanceOverviewDto } from './dto/finance-overview.dto';
+import { FarmerPurgeService } from './farmer-purge.service';
+import { PurgeFarmerQueryDto } from './dto/purge-farmer.dto';
 
 @ApiTags('Admin')
 @Controller('admins')
@@ -71,6 +75,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly payoutMonitoringService: PayoutMonitoringService,
+    private readonly farmerPurgeService: FarmerPurgeService,
   ) {}
 
   private assertValidObjectId(id: string) {
@@ -377,6 +382,26 @@ export class AdminController {
   })
   async activateFarmer(@Param('id') id: string) {
     return this.adminService.activateFarmer(id);
+  }
+
+  @Delete('farmers/:id')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, AdminGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Permanently delete a farmer',
+    description:
+      'Irreversibly deletes a farmer profile and login, along with every transaction, purchase, loan, wallet, and activity record tied to them. Scoped to this one farmer only — no other account is affected. Super-admin only.',
+  })
+  @ApiParam({ name: 'id', description: 'Farmer profile ID' })
+  @ApiQuery({ name: 'confirmation', enum: ['DELETE'], description: 'Must be the literal string DELETE.' })
+  @ApiResponse({ status: 200, description: 'Farmer and all associated records permanently deleted' })
+  @ApiResponse({ status: 404, description: 'Farmer not found' })
+  async purgeFarmer(
+    @Param('id') id: string,
+    @Query() query: PurgeFarmerQueryDto,
+  ) {
+    return this.farmerPurgeService.purgeFarmer(id);
   }
 
   @Get('buyers/list')

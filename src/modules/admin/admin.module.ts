@@ -32,9 +32,17 @@ import {
 import { SMSLog, SMSLogSchema } from '../../schemas/sms-log.schema';
 import { Settings, SettingsSchema } from '../../schemas/settings.schema';
 import { Wallet, WalletSchema } from '../../schemas/wallet.schema';
+import { SavingsAccount, SavingsAccountSchema } from '../../schemas/savings-account.schema';
+import { Notification, NotificationSchema } from '../../schemas/notification.schema';
+import { Listing, ListingSchema } from '../../schemas/listing.schema';
+import { Dispute, DisputeSchema } from '../../schemas/dispute.schema';
+import { Report, ReportSchema } from '../../schemas/report.schema';
+import { SupplierNetwork, SupplierNetworkSchema } from '../../schemas/supplier-network.schema';
+import { PayoutJobRecord, PayoutJobRecordSchema } from '../../schemas/payout-job.schema';
 import { JwtStrategy } from '../../common/strategies/jwt.strategy';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { AdminGuard } from '../../common/guards/admin.guard';
+import { SuperAdminGuard } from '../../common/guards/super-admin.guard';
 import { WalletModule } from '../wallet/wallet.module';
 import { WalletService } from '../wallet/wallet.service';
 import { FarmerModule } from '../farmer/farmer.module';
@@ -44,6 +52,7 @@ import { OtpService } from '../../common/services/otp.service';
 import { SmsQueueService } from '../../common/services/sms-queue.service';
 import { SMSLogRepository } from '../../common/repositories/sms-log.repository';
 import { StaffModule } from '../staff/staff.module';
+import { FarmerPurgeService } from './farmer-purge.service';
 
 @Module({
   imports: [
@@ -63,6 +72,13 @@ import { StaffModule } from '../staff/staff.module';
       { name: SMSLog.name, schema: SMSLogSchema },
       { name: Settings.name, schema: SettingsSchema },
       { name: Wallet.name, schema: WalletSchema },
+      { name: SavingsAccount.name, schema: SavingsAccountSchema },
+      { name: Notification.name, schema: NotificationSchema },
+      { name: Listing.name, schema: ListingSchema },
+      { name: Dispute.name, schema: DisputeSchema },
+      { name: Report.name, schema: ReportSchema },
+      { name: SupplierNetwork.name, schema: SupplierNetworkSchema },
+      { name: PayoutJobRecord.name, schema: PayoutJobRecordSchema },
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
@@ -94,6 +110,8 @@ import { StaffModule } from '../staff/staff.module';
     JwtStrategy,
     JwtAuthGuard,
     AdminGuard,
+    SuperAdminGuard,
+    FarmerPurgeService,
   ],
   exports: [AdminService],
 })

@@ -60,11 +60,18 @@ import { CreateLoanDto } from '../loan/dto/create-loan.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { Types } from 'mongoose';
+import { PayoutMonitoringService } from '../wallet/payout-monitoring.service';
+import { WithdrawerKpiFilterDto } from '../wallet/dto/withdrawer-kpi-query.dto';
+import { WithdrawerPayoutFilterDto } from '../wallet/dto/withdrawer-payout-query.dto';
+import { FinanceOverviewDto } from './dto/finance-overview.dto';
 
 @ApiTags('Admin')
 @Controller('admins')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly payoutMonitoringService: PayoutMonitoringService,
+  ) {}
 
   private assertValidObjectId(id: string) {
     if (!Types.ObjectId.isValid(id)) {
@@ -1102,6 +1109,89 @@ export class AdminController {
     @Body() fundWalletDto: AdminFundOrganizationWalletDto,
   ) {
     return this.adminService.fundOrganizationWallet(fundWalletDto);
+  }
+
+  @Get('wallet/organization/all')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'List pooled organization wallets',
+    description:
+      'Retrieve payroll, bonus, withdrawer, purchase, withholding-tax, and charges organization wallet snapshots.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Organization wallets retrieved successfully',
+  })
+  async listOrgWalletBalances() {
+    return this.adminService.listOrganizationWallets();
+  }
+
+  @Get('finance/kpis')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get finance overview',
+    description:
+      'Retrieve finance KPIs (operational and engagement metrics) with optional date filtering.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Finance overview retrieved successfully',
+    type: FinanceOverviewDto,
+  })
+  async getFinanceOverview(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ): Promise<FinanceOverviewDto> {
+    return this.adminService.getFinanceOverview({ startDate, endDate });
+  }
+
+  @Get('withdrawers/kpis')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Summarize withdrawer payouts',
+    description:
+      'Retrieve aggregate metrics for withdrawer payout processing with optional date filters.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Withdrawer KPIs retrieved successfully',
+  })
+  async summarizeWithdrawerPayouts(@Query() filter: WithdrawerKpiFilterDto) {
+    return this.payoutMonitoringService.summarizePayouts(filter);
+  }
+
+  @Get('withdrawers')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'List withdrawer payout records',
+    description:
+      'Retrieve paginated withdrawer payout records with status/date/search filters.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Withdrawer payouts retrieved successfully',
+  })
+  async listWithdrawerPayouts(@Query() filter: WithdrawerPayoutFilterDto) {
+    return this.payoutMonitoringService.listPayouts(filter);
+  }
+
+  @Get('withdrawers/:withdrawerId')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get withdrawer payout record details',
+    description: 'Retrieve a single withdrawer payout record by ID.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Withdrawer payout details retrieved successfully',
+  })
+  async getWithdrawerPayoutDetail(@Param('withdrawerId') withdrawerId: string) {
+    return this.payoutMonitoringService.getPayoutDetail(withdrawerId);
   }
 
   // Generic :id routes MUST be at the end to avoid catching specific routes like /staff, /wallet, /bonus

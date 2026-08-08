@@ -25,6 +25,10 @@ import {
 } from '../../schemas/ussd-session.schema';
 import { Loan, LoanSchema } from '../../schemas/loan.schema';
 import { LoanType, LoanTypeSchema } from '../../schemas/loan-type.schema';
+import {
+  FarmInputsOrder,
+  FarmInputsOrderSchema,
+} from '../../schemas/farm-inputs-order.schema';
 import { SMSLog, SMSLogSchema } from '../../schemas/sms-log.schema';
 import { Settings, SettingsSchema } from '../../schemas/settings.schema';
 import { Wallet, WalletSchema } from '../../schemas/wallet.schema';
@@ -55,6 +59,7 @@ import { StaffModule } from '../staff/staff.module';
       { name: UssdSession.name, schema: UssdSessionSchema },
       { name: Loan.name, schema: LoanSchema },
       { name: LoanType.name, schema: LoanTypeSchema },
+      { name: FarmInputsOrder.name, schema: FarmInputsOrderSchema },
       { name: SMSLog.name, schema: SMSLogSchema },
       { name: Settings.name, schema: SettingsSchema },
       { name: Wallet.name, schema: WalletSchema },

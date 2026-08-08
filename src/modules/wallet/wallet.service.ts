@@ -11,6 +11,22 @@ import { WalletDocument } from '../../schemas/wallet.schema';
 import { Transaction, TransactionDocument } from '../../schemas/transaction.schema';
 import { PaystackService } from './paystack.service';
 
+/**
+ * Display names for the org-level pooled wallets (as opposed to a
+ * farmer/staff personal wallet). Each entry here corresponds to one
+ * named Wallet document with is_organization_wallet-style lookup by name.
+ */
+export const ORG_WALLET_LABELS = {
+  payroll: 'Organization Payroll Wallet',
+  bonus: 'Organization Bonus Wallet',
+  withdrawer: 'Organization Withdrawer Wallet',
+  purchase: 'Organization Purchase Wallet',
+  withholding_tax: 'Organization Withholding Tax Wallet',
+  charges: 'Organization Charges Wallet',
+} as const;
+
+export type OrgWalletKind = keyof typeof ORG_WALLET_LABELS;
+
 @Injectable()
 export class WalletService {
   private readonly logger = new Logger(WalletService.name);
@@ -620,6 +636,50 @@ export class WalletService {
     }
 
     return this.walletRepository.createOrganizationWallet(organizationName);
+  }
+
+  private labelForOrgWalletKind(kind: string): string {
+    const normalizedKind = (kind || '').trim().toLowerCase() as OrgWalletKind;
+    const label = ORG_WALLET_LABELS[normalizedKind];
+    if (!label) {
+      throw new BadRequestException(`Unrecognized organization wallet kind: ${kind}`);
+    }
+    return label;
+  }
+
+  /**
+   * Look up (and optionally lazily create) the pooled organization wallet
+   * for a given kind, e.g. 'payroll' or 'withdrawer'.
+   */
+  async findOrgWalletByKind(
+    kind: string,
+    createIfMissing = false,
+  ): Promise<WalletDocument | null> {
+    const label = this.labelForOrgWalletKind(kind);
+    const existing = await this.walletRepository.findOrganizationWallet(label);
+    if (existing || !createIfMissing) {
+      return existing;
+    }
+    return this.walletRepository.createOrganizationWallet(label);
+  }
+
+  /**
+   * Snapshot every pooled organization wallet kind in one call, keyed by
+   * kind so callers can build KPI/summary views without N sequential lookups.
+   */
+  async listAllOrgWallets(): Promise<Record<OrgWalletKind, WalletDocument | null>> {
+    const kinds = Object.keys(ORG_WALLET_LABELS) as OrgWalletKind[];
+    const lookups = await Promise.all(
+      kinds.map((kind) => this.findOrgWalletByKind(kind)),
+    );
+
+    return kinds.reduce(
+      (result, kind, index) => {
+        result[kind] = lookups[index];
+        return result;
+      },
+      {} as Record<OrgWalletKind, WalletDocument | null>,
+    );
   }
 
   /**

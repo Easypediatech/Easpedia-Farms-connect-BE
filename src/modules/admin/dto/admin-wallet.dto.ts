@@ -113,3 +113,13 @@ export class AdminFundOrganizationWalletDto {
   @IsString({ message: 'Reason must be a string' })
   reason?: string;
 }
+
+/** Canonical kinds of pooled organization wallet. */
+export enum OrgWalletKindDto {
+  PAYROLL = 'payroll',
+  BONUS = 'bonus',
+  WITHDRAWER = 'withdrawer',
+  PURCHASE = 'purchase',
+  WITHHOLDING_TAX = 'withholding_tax',
+  CHARGES = 'charges',
+}

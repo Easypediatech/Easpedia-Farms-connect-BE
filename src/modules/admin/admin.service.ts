@@ -76,6 +76,16 @@ import { SettingsResponseDto } from './dto/settings/settings-response.dto';
 import { StaffRepository } from '../staff/staff.repository';
 import { StaffService } from '../staff/staff.service';
 import { Wallet, WalletDocument } from '../../schemas/wallet.schema';
+import {
+  FarmInputsOrder,
+  FarmInputsOrderDocument,
+} from '../../schemas/farm-inputs-order.schema';
+import { OrgWalletKindDto } from './dto/admin-wallet.dto';
+import {
+  FinanceMetricDto,
+  FinanceOverviewDto,
+  OrgWalletBalanceDto,
+} from './dto/finance-overview.dto';
 
 @Injectable()
 export class AdminService {
@@ -109,10 +119,46 @@ export class AdminService {
     private readonly settingsModel: Model<SettingsDocument>,
     @InjectModel(Wallet.name)
     private readonly walletModel: Model<WalletDocument>,
+    @InjectModel(FarmInputsOrder.name)
+    private readonly farmInputsOrderModel: Model<FarmInputsOrderDocument>,
   ) {}
 
   // Wallet service will be injected via setter to avoid circular dependency
   private walletService: any;
+
+  private readonly orgWalletDisplayNames: Record<OrgWalletKindDto, string> = {
+    [OrgWalletKindDto.PAYROLL]: 'Organization Payroll Wallet',
+    [OrgWalletKindDto.BONUS]: 'Organization Bonus Wallet',
+    [OrgWalletKindDto.WITHDRAWER]: 'Organization Withdrawer Wallet',
+    [OrgWalletKindDto.PURCHASE]: 'Organization Purchase Wallet',
+    [OrgWalletKindDto.WITHHOLDING_TAX]: 'Organization Withholding Tax Wallet',
+    [OrgWalletKindDto.CHARGES]: 'Organization Charges Wallet',
+  };
+
+  /**
+   * Turns the raw { payroll: Wallet | null, ... } lookup from WalletService
+   * into the flat balance-snapshot shape both the finance overview and the
+   * standalone org-wallets endpoint return.
+   */
+  private buildOrgWalletSnapshots(wallets: Record<string, any>) {
+    return (Object.values(OrgWalletKindDto) as OrgWalletKindDto[]).map(
+      (kind) => {
+        const wallet = wallets[kind];
+        return {
+          id: wallet ? String(wallet._id) : null,
+          walletType: kind,
+          walletName: this.orgWalletDisplayNames[kind],
+          exists: Boolean(wallet),
+          balance: wallet ? wallet.balance / 100 : 0,
+          totalDeposited: wallet ? wallet.total_deposited / 100 : 0,
+          totalWithdrawn: wallet ? wallet.total_withdrawn / 100 : 0,
+          currency: 'NGN',
+          createdAt: wallet?.createdAt || null,
+          updatedAt: wallet?.updatedAt || null,
+        };
+      },
+    );
+  }
 
   /**
    * Create a new admin account
@@ -2140,6 +2186,300 @@ export class AdminService {
       this.logger.error(`Failed to get organization wallet: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * Snapshot of every pooled organization wallet (payroll, bonus,
+   * withdrawer, purchase, withholding tax, charges) for the wallets admin
+   * screen.
+   */
+  async listOrganizationWallets(): Promise<any> {
+    if (!this.walletService) {
+      throw new BadRequestException('Wallet service not available');
+    }
+
+    const wallets = await this.walletService.listAllOrgWallets();
+
+    return {
+      success: true,
+      message: 'Organization wallets retrieved successfully',
+      data: this.buildOrgWalletSnapshots(wallets),
+    };
+  }
+
+  /**
+   * Parses an optional startDate/endDate pair (either date-only or full
+   * ISO) into a concrete [from, to] window, defaulting to the current
+   * calendar month when nothing is supplied.
+   */
+  private resolveReportingWindow(range?: {
+    startDate?: string;
+    endDate?: string;
+  }): { from: Date; to: Date } {
+    const parseBoundary = (value: string, edge: 'start' | 'end'): Date => {
+      const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+      const parsed = isDateOnly
+        ? new Date(`${value}T${edge === 'start' ? '00:00:00.000' : '23:59:59.999'}`)
+        : new Date(value);
+
+      if (Number.isNaN(parsed.getTime())) {
+        throw new BadRequestException(
+          `Invalid ${edge === 'start' ? 'startDate' : 'endDate'} format`,
+        );
+      }
+      return parsed;
+    };
+
+    const from = range?.startDate ? parseBoundary(range.startDate, 'start') : null;
+    const to = range?.endDate ? parseBoundary(range.endDate, 'end') : null;
+
+    if (from && to && from > to) {
+      throw new BadRequestException('startDate cannot be greater than endDate');
+    }
+
+    const now = new Date();
+    return {
+      from: from || new Date(now.getFullYear(), now.getMonth(), 1),
+      to: to || now,
+    };
+  }
+
+  /**
+   * Aggregate operational + engagement metrics for the finance overview
+   * screen: USSD cost efficiency, revenue, loan performance, and pooled
+   * wallet balances for a given reporting window (defaults to this month).
+   */
+  async getFinanceOverview(filters?: {
+    startDate?: string;
+    endDate?: string;
+  }): Promise<FinanceOverviewDto> {
+    if (!this.walletService) {
+      throw new BadRequestException('Wallet service not available');
+    }
+
+    const { from: periodStart, to: periodEnd } = this.resolveReportingWindow(filters);
+    const periodCreatedAtMatch = {
+      createdAt: { $gte: periodStart, $lte: periodEnd },
+    };
+    const periodSessionMatch = {
+      start_time: { $gte: periodStart, $lte: periodEnd },
+    };
+
+    const ussdSessionCostNaira = Number(process.env.USSD_SESSION_COST_NAIRA) || 6;
+    const legacySessionCostNaira = Number(process.env.LEGACY_SESSION_COST_NAIRA) || 20;
+
+    const [
+      totalFarmers,
+      totalStaff,
+      totalActiveFarmers,
+      totalUssdSessions,
+      inputOrdersPlaced,
+      loanApplicationsSubmitted,
+      completedPayments,
+      failedPayments,
+      revenueAggregate,
+      loanRepaymentAggregate,
+      advisoryRequestsAccessed,
+      wallets,
+    ] = await Promise.all([
+      this.farmerModel.countDocuments().exec(),
+      this.userModel.countDocuments({ user_type: 'staff' }).exec(),
+      this.userModel
+        .countDocuments({
+          user_type: { $in: ['farmer', 'student_farmer'] },
+          last_activity: { $gte: periodStart, $lte: periodEnd },
+        })
+        .exec(),
+      this.ussdSessionModel.countDocuments(periodSessionMatch).exec(),
+      this.farmInputsOrderModel.countDocuments(periodCreatedAtMatch).exec(),
+      this.loanModel.countDocuments(periodCreatedAtMatch).exec(),
+      this.transactionModel
+        .countDocuments({
+          ...periodCreatedAtMatch,
+          status: 'completed',
+          type: {
+            $in: [
+              'sale',
+              'purchase',
+              'deposit',
+              'withdrawal',
+              'loan_disbursement',
+              'loan_repayment',
+            ],
+          },
+        })
+        .exec(),
+      this.transactionModel
+        .countDocuments({
+          ...periodCreatedAtMatch,
+          status: 'failed',
+          type: {
+            $in: [
+              'sale',
+              'purchase',
+              'deposit',
+              'withdrawal',
+              'loan_disbursement',
+              'loan_repayment',
+            ],
+          },
+        })
+        .exec(),
+      this.transactionModel
+        .aggregate([
+          {
+            $match: {
+              ...periodCreatedAtMatch,
+              status: 'completed',
+              type: { $in: ['sale', 'purchase'] },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: '$amount' },
+            },
+          },
+        ])
+        .exec(),
+      this.loanModel
+        .aggregate([
+          {
+            $match: {
+              ...periodCreatedAtMatch,
+              total_repayment: { $gt: 0 },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              totalRepayment: { $sum: '$total_repayment' },
+              totalPaid: { $sum: '$amount_paid' },
+            },
+          },
+        ])
+        .exec(),
+      this.ussdSessionModel
+        .countDocuments({
+          ...periodSessionMatch,
+          $or: [
+            { action: { $regex: /advis/i } },
+            { last_menu: { $regex: /advis/i } },
+          ],
+        })
+        .exec(),
+      this.walletService.listAllOrgWallets(),
+    ]);
+
+    const monthlyUssdCost = totalUssdSessions * ussdSessionCostNaira;
+    const costPerSession =
+      totalUssdSessions > 0
+        ? monthlyUssdCost / totalUssdSessions
+        : ussdSessionCostNaira;
+    const revenueGenerated = (revenueAggregate[0]?.total || 0) / 100;
+    const operationalCostSavings = Math.max(
+      totalUssdSessions * (legacySessionCostNaira - ussdSessionCostNaira),
+      0,
+    );
+
+    const paymentSuccessRate =
+      completedPayments + failedPayments > 0
+        ? (completedPayments / (completedPayments + failedPayments)) * 100
+        : 0;
+
+    const totalRepayment = loanRepaymentAggregate[0]?.totalRepayment || 0;
+    const totalPaid = loanRepaymentAggregate[0]?.totalPaid || 0;
+    const loanRepaymentRate =
+      totalRepayment > 0
+        ? Math.min((totalPaid / totalRepayment) * 100, 100)
+        : 0;
+
+    const walletSnapshots = this.buildOrgWalletSnapshots(wallets);
+
+    const totalOrganizationWalletBalance = walletSnapshots.reduce(
+      (total, wallet) => total + wallet.balance,
+      0,
+    );
+
+    const operationalMetrics: FinanceMetricDto[] = [
+      {
+        metric: 'Cost per USSD Session (₦)',
+        value: Number(costPerSession.toFixed(2)),
+        unit: 'naira_per_session',
+      },
+      {
+        metric: 'Total Active Farmers',
+        value: totalActiveFarmers,
+        unit: 'count',
+      },
+      {
+        metric: 'Total Monthly USSD Cost (₦)',
+        value: Number(monthlyUssdCost.toFixed(2)),
+        unit: 'naira',
+      },
+      {
+        metric: 'Revenue Generated (₦)',
+        value: Number(revenueGenerated.toFixed(2)),
+        unit: 'naira',
+      },
+      {
+        metric: 'Operational Cost Savings (₦)',
+        value: Number(operationalCostSavings.toFixed(2)),
+        unit: 'naira',
+      },
+    ];
+
+    const engagementMetrics: FinanceMetricDto[] = [
+      {
+        metric: 'Input Orders Placed',
+        value: inputOrdersPlaced,
+        unit: 'count',
+      },
+      {
+        metric: 'Payment Success Rate (%)',
+        value: Number(paymentSuccessRate.toFixed(2)),
+        unit: 'percent',
+      },
+      {
+        metric: 'Loan Applications Submitted',
+        value: loanApplicationsSubmitted,
+        unit: 'count',
+      },
+      {
+        metric: 'Loan Repayment Rate (%)',
+        value: Number(loanRepaymentRate.toFixed(2)),
+        unit: 'percent',
+      },
+      {
+        metric: 'Advisory Requests Accessed',
+        value: advisoryRequestsAccessed,
+        unit: 'count',
+      },
+    ];
+
+    return {
+      period: `${periodStart.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })} - ${periodEnd.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })}`,
+      wallets: walletSnapshots,
+      operationalMetrics,
+      engagementMetrics,
+      summary: {
+        totalFarmers,
+        totalStaff,
+        totalActiveFarmers,
+        totalOrganizationWalletBalance: Number(
+          totalOrganizationWalletBalance.toFixed(2),
+        ),
+      },
+      generatedAt: new Date(),
+    };
   }
 
   /**

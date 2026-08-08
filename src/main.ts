@@ -44,6 +44,7 @@ async function bootstrap() {
             'https://farmconnect-backend-wsez.onrender.com',
             'https://cassava-management-ussd-system-eight.vercel.app',
             'https://admin.promisepointgtnl.com',
+            'https://farms-fe.vercel.app',
         ],
         credentials: true,
     });
